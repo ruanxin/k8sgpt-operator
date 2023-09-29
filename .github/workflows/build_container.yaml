@@ -136,7 +136,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           target: production
           tags: |
-            ghcr.io/k8sgpt-ai/${{ env.IMAGE_NAME }}:dev-${{ env.DATETIME }}
+            ghcr.io/ruanxin/${{ env.IMAGE_NAME }}:dev-${{ env.DATETIME }}
           build-args: |
             GIT_HASH=${{ env.GIT_SHA }}
             RELEASE_VERSION=dev-${{ env.DATETIME }}
