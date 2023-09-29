@@ -53,13 +53,10 @@ type WebhookRef struct {
 }
 
 type AISpec struct {
-	// +kubebuilder:default:=openai
-	// +kubebuilder:validation:Enum=openai;localai;azureopenai
-	Backend string `json:"backend"`
-	BaseUrl string `json:"baseUrl,omitempty"`
 	// +kubebuilder:default:=gpt-3.5-turbo
-	Model   string     `json:"model,omitempty"`
-	Engine  string     `json:"engine,omitempty"`
+	Model  string `json:"model,omitempty"`
+	Engine string `json:"engine,omitempty"`
+	// service binding Secret
 	Secret  *SecretRef `json:"secret,omitempty"`
 	Enabled bool       `json:"enabled,omitempty"`
 	// +kubebuilder:default:=true

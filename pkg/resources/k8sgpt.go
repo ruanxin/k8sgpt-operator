@@ -19,6 +19,7 @@ import (
 	err "errors"
 
 	"github.com/k8sgpt-ai/k8sgpt-operator/api/v1alpha1"
+	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/backend"
 	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -164,7 +165,15 @@ func GetClusterRole(config v1alpha1.K8sGPT) (*r1.ClusterRole, error) {
 }
 
 // GetDeployment Create deployment with the latest K8sGPT image
-func GetDeployment(config v1alpha1.K8sGPT) (*appsv1.Deployment, error) {
+func GetDeployment(config v1alpha1.K8sGPT, backendInfo *backend.BackendInfo) (*appsv1.Deployment, error) {
+	if backendInfo == nil {
+		return &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      DeploymentName,
+				Namespace: config.Namespace,
+			},
+		}, nil
+	}
 
 	// Create deployment
 	replicas := int32(1)
@@ -213,7 +222,7 @@ func GetDeployment(config v1alpha1.K8sGPT) (*appsv1.Deployment, error) {
 								},
 								{
 									Name:  "K8SGPT_BACKEND",
-									Value: config.Spec.AI.Backend,
+									Value: v1alpha1.AzureOpenAI,
 								},
 								{
 									Name:  "XDG_CONFIG_HOME",
@@ -257,15 +266,15 @@ func GetDeployment(config v1alpha1.K8sGPT) (*appsv1.Deployment, error) {
 			},
 		},
 	}
-	if config.Spec.AI.Secret != nil {
+	if backendInfo.AccessSecret != nil {
 		password := corev1.EnvVar{
 			Name: "K8SGPT_PASSWORD",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: config.Spec.AI.Secret.Name,
+						Name: backendInfo.AccessSecret.Name,
 					},
-					Key: config.Spec.AI.Secret.Key,
+					Key: backendInfo.AccessSecret.Key,
 				},
 			},
 		}
@@ -296,32 +305,27 @@ func GetDeployment(config v1alpha1.K8sGPT) (*appsv1.Deployment, error) {
 		addRemoteCacheEnvVar("AWS_SECRET_ACCESS_KEY", "aws_secret_access_key")
 
 	}
-	if config.Spec.AI.BaseUrl != "" {
-		baseUrl := corev1.EnvVar{
-			Name:  "K8SGPT_BASEURL",
-			Value: config.Spec.AI.BaseUrl,
-		}
+	if backendInfo.BaseUrl != "" {
 		deployment.Spec.Template.Spec.Containers[0].Env = append(
-			deployment.Spec.Template.Spec.Containers[0].Env, baseUrl,
+			deployment.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
+				Name:  "K8SGPT_BASEURL",
+				Value: backendInfo.BaseUrl,
+			},
 		)
 	}
 	// Engine is required only when azureopenai is the ai backend
-	if config.Spec.AI.Engine != "" && config.Spec.AI.Backend == v1alpha1.AzureOpenAI {
-		engine := corev1.EnvVar{
-			Name:  "K8SGPT_ENGINE",
-			Value: config.Spec.AI.Engine,
-		}
-		deployment.Spec.Template.Spec.Containers[0].Env = append(
-			deployment.Spec.Template.Spec.Containers[0].Env, engine,
-		)
-	} else if config.Spec.AI.Engine != "" && config.Spec.AI.Backend != v1alpha1.AzureOpenAI {
-		return &appsv1.Deployment{}, err.New("Engine is supported only by azureopenai provider.")
+	engine := corev1.EnvVar{
+		Name:  "K8SGPT_ENGINE",
+		Value: config.Spec.AI.Engine,
 	}
+	deployment.Spec.Template.Spec.Containers[0].Env = append(
+		deployment.Spec.Template.Spec.Containers[0].Env, engine,
+	)
 	return &deployment, nil
 }
 
 func Sync(ctx context.Context, c client.Client,
-	config v1alpha1.K8sGPT, i SyncOrDestroy) error {
+	config v1alpha1.K8sGPT, i SyncOrDestroy, backendInfo *backend.BackendInfo) error {
 
 	var objs []client.Object
 
@@ -353,7 +357,7 @@ func Sync(ctx context.Context, c client.Client,
 
 	objs = append(objs, clusterRoleBinding)
 
-	deployment, er := GetDeployment(config)
+	deployment, er := GetDeployment(config, backendInfo)
 	if er != nil {
 		return er
 	}

@@ -161,8 +161,9 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v3.8.7
-CONTROLLER_TOOLS_VERSION ?= v0.11.1
+KUSTOMIZE_VERSION ?= v5.1.1
+CONTROLLER_TOOLS_VERSION ?= v0.13.0
+GOLANG_CI_LINT_VERSION ?= v1.54.2
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
 .PHONY: kustomize
@@ -191,3 +192,8 @@ $(ENVTEST): $(LOCALBIN)
 coverage: generate fmt vet manifests ## Run code coverage
 	go test -v -cover ./... -coverprofile coverage.out | grep -v /chart/ | grep -v /images/ | grep -v /charts/ | grep -v /config/ | grep -v /hack/ | grep -v /test/ | grep -v /vendor/
 	go tool cover -html=coverage.out -o coverage.html
+
+.PHONY: lint
+lint: ## Run golangci-lint against code.
+	GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANG_CI_LINT_VERSION)
+	$(LOCALBIN)/golangci-lint run --verbose -c .golangci.yaml

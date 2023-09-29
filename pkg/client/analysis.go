@@ -18,7 +18,7 @@ func (c *Client) ProcessAnalysis(deployment v1.Deployment, config *v1alpha1.K8sG
 	req := &schemav1.AnalyzeRequest{
 		Explain:   config.Spec.AI.Enabled,
 		Nocache:   config.Spec.NoCache,
-		Backend:   config.Spec.AI.Backend,
+		Backend:   v1alpha1.AzureOpenAI,
 		Filters:   config.Spec.Filters,
 		Anonymize: config.Spec.AI.Anonymize,
 		Language:  config.Spec.AI.Language,

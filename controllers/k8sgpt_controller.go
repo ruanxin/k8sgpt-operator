@@ -21,6 +21,7 @@ import (
 	"time"
 
 	corev1alpha1 "github.com/k8sgpt-ai/k8sgpt-operator/api/v1alpha1"
+	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/backend"
 
 	kclient "github.com/k8sgpt-ai/k8sgpt-operator/pkg/client"
 	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/integrations"
@@ -106,7 +107,7 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if utils.ContainsString(k8sgptConfig.GetFinalizers(), FinalizerName) {
 
 			// Delete any external resources associated with the instance
-			err := resources.Sync(ctx, r.Client, *k8sgptConfig, resources.DestroyOp)
+			err := resources.Sync(ctx, r.Client, *k8sgptConfig, resources.DestroyOp, nil)
 			if err != nil {
 				k8sgptReconcileErrorCount.Inc()
 				return r.finishReconcile(err, false)
@@ -120,16 +121,20 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		// Stop reconciliation as the item is being deleted
 		return r.finishReconcile(nil, false)
 	}
-
+	// Check if ServiceBinding secret exists
+	backendInfo, err := backend.GetBackendInfo(ctx, r.Client, k8sgptConfig)
+	if err != nil {
+		return r.finishReconcile(err, true)
+	}
 	// Check and see if the instance is new or has a K8sGPT deployment in flight
 	deployment := v1.Deployment{}
 	err = r.Get(ctx, client.ObjectKey{Namespace: k8sgptConfig.Namespace,
-		Name: "k8sgpt-deployment"}, &deployment)
+		Name: resources.DeploymentName}, &deployment)
 	if client.IgnoreNotFound(err) != nil {
 		k8sgptReconcileErrorCount.Inc()
 		return r.finishReconcile(err, false)
 	}
-	err = resources.Sync(ctx, r.Client, *k8sgptConfig, resources.SyncOp)
+	err = resources.Sync(ctx, r.Client, *k8sgptConfig, resources.SyncOp, backendInfo)
 	if err != nil {
 		k8sgptReconcileErrorCount.Inc()
 		return r.finishReconcile(err, false)
