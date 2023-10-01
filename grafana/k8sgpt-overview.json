@@ -639,8 +639,8 @@
         {
           "current": {
             "selected": false,
-            "text": "k8sgpt-operator-system",
-            "value": "k8sgpt-operator-system"
+            "text": "ai-sre",
+            "value": "ai-sre"
           },
           "datasource": {
             "type": "prometheus",

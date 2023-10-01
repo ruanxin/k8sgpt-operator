@@ -2,19 +2,12 @@ apiVersion: core.k8sgpt.ai/v1alpha1
 kind: K8sGPT
 metadata:
   name: k8sgpt-sample
-  namespace: k8sgpt-operator-system
+  namespace: ai-sre
 spec:
   ai:
-    model: gpt-3.5-turbo
-    backend: openai
     enabled: true
+    engine: llm
     secret:
-      name: k8sgpt-sample-secret
-      key: openai-api-key
+      name: openai-service
   noCache: false
   version: v0.3.5
-  remoteCache:
-    credentials:
-      name: k8sgpt-sample-cache-secret
-    bucketName: k8sgpt-debug-test
-    region: eu-west-2

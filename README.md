@@ -15,7 +15,7 @@ It will allow you to create a custom resource that defines the behaviour and sco
 
 ```
 helm repo add k8sgpt https://charts.k8sgpt.ai/
-helm install release k8sgpt/k8sgpt-operator -n k8sgpt-operator-system --create-namespace
+helm install release k8sgpt/k8sgpt-operator -n ai-sre --create-namespace
 ```
 
 ## Run the example
@@ -24,7 +24,7 @@ helm install release k8sgpt/k8sgpt-operator -n k8sgpt-operator-system --create-n
 
 2. Create secret:
 ```sh 
-kubectl create secret generic k8sgpt-sample-secret --from-literal=openai-api-key=$OPENAI_TOKEN -n k8sgpt-operator-system
+kubectl create secret generic k8sgpt-sample-secret --from-literal=openai-api-key=$OPENAI_TOKEN -n ai-sre
 ```
 
 3. Apply the K8sGPT configuration object:
@@ -34,7 +34,7 @@ apiVersion: core.k8sgpt.ai/v1alpha1
 kind: K8sGPT
 metadata:
   name: k8sgpt-sample
-  namespace: k8sgpt-operator-system
+  namespace: ai-sre
 spec:
   ai:
     enabled: true
@@ -94,7 +94,7 @@ apiVersion: core.k8sgpt.ai/v1alpha1
 kind: K8sGPT
 metadata:
   name: k8sgpt-sample
-  namespace: k8sgpt-operator-system
+  namespace: ai-sre
 spec:
   model: gpt-3.5-turbo
   backend: openai
@@ -124,7 +124,7 @@ EOF
 
 2. Create secret:
 ```sh 
-kubectl create secret generic k8sgpt-sample-secret --from-literal=azure-api-key=$AZURE_TOKEN -n k8sgpt-operator-system
+kubectl create secret generic k8sgpt-sample-secret --from-literal=azure-api-key=$AZURE_TOKEN -n ai-sre
 ```
 
 3. Apply the K8sGPT configuration object:
@@ -134,7 +134,7 @@ apiVersion: core.k8sgpt.ai/v1alpha1
 kind: K8sGPT
 metadata:
   name: k8sgpt-sample
-  namespace: k8sgpt-operator-system
+  namespace: ai-sre
 spec:
   ai:
     enabled: true

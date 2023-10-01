@@ -2,7 +2,7 @@ apiVersion: core.k8sgpt.ai/v1alpha1
 kind: K8sGPT
 metadata:
   name: k8sgpt-sample-localai
-  namespace: k8sgpt-operator-system
+  namespace: ai-sre
 spec:
   ai:
     model: ggml-gpt4all-j-v1.3-groovy.bin

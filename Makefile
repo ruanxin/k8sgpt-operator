@@ -1,6 +1,6 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= ghcr.io/k8sgpt-ai/k8sgpt-operator:latest
+IMG ?= ghcr.io/ruanxin/k8sgpt-operator:dev-202309291554
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.26.0
 CHART_VERSION=v0.0.6 #x-release-please-version
@@ -161,7 +161,7 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.1.1
+KUSTOMIZE_VERSION ?= v4.5.6
 CONTROLLER_TOOLS_VERSION ?= v0.13.0
 GOLANG_CI_LINT_VERSION ?= v1.54.2
 
