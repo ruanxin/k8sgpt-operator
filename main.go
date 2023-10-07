@@ -54,6 +54,8 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var tokenExpireTime time.Duration
+	flag.DurationVar(&tokenExpireTime, "token-expire-time", 11*time.Hour, "token expire time")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
@@ -118,10 +120,11 @@ func main() {
 	sinkClient := sinks.NewClient(sinkTimeout)
 
 	if err = (&controllers.K8sGPTReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Integrations: integration,
-		SinkClient:   sinkClient,
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		TokenExpireTime: tokenExpireTime,
+		Integrations:    integration,
+		SinkClient:      sinkClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "K8sGPT")
 		os.Exit(1)

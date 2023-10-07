@@ -15,7 +15,6 @@ import (
 
 	"github.com/k8sgpt-ai/k8sgpt-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -33,7 +32,6 @@ const (
 	accessSecretBaseUrl    = "base_url"
 	accessSecretLabelKey   = "operator.kyma-project.io/managed-by"
 	accessSecretLabelValue = "ai-sre"
-	expireTime             = 10 * time.Hour
 )
 
 var (
@@ -45,8 +43,8 @@ var (
 	ErrRequestReject       = errors.New("request reject")
 )
 
-func GetBackendInfo(ctx context.Context, k8sClient client.Client, config *v1alpha1.K8sGPT) (*Info, error) {
-	backendInfo, err := getBackendInfoFromSecret(ctx, k8sClient)
+func GetBackendInfo(ctx context.Context, k8sClient client.Client, config *v1alpha1.K8sGPT, tokenExpireTime time.Duration) (*Info, error) {
+	backendInfo, err := getBackendInfoFromSecret(ctx, k8sClient, tokenExpireTime)
 	if err == nil {
 		return backendInfo, nil
 	}
@@ -82,13 +80,6 @@ func GetBackendInfo(ctx context.Context, k8sClient client.Client, config *v1alph
 	}
 
 	return nil, ErrWaitForAccessSecret
-}
-
-func expiredSoon(timestamp v1.Time) bool {
-	if timestamp.Add(expireTime).Before(time.Now()) {
-		return true
-	}
-	return false
 }
 
 func fetchAccessToken(ctx context.Context, oauthUrl, clientId, clientSecret string) (*AccessToken, error) {
@@ -150,7 +141,7 @@ func generateSecretName(token string) string {
 	return accessSecretName + hex.EncodeToString(h.Sum(nil))
 }
 
-func getBackendInfoFromSecret(ctx context.Context, k8sClient client.Client) (*Info, error) {
+func getBackendInfoFromSecret(ctx context.Context, k8sClient client.Client, tokenExpireTime time.Duration) (*Info, error) {
 
 	secretList := corev1.SecretList{}
 	err := k8sClient.List(
@@ -180,7 +171,8 @@ func getBackendInfoFromSecret(ctx context.Context, k8sClient client.Client) (*In
 	}
 
 	deleteOldSecret(ctx, k8sClient, secretList, latestSecret)
-	if expiredSoon(latestSecret.CreationTimestamp) {
+
+	if latestSecret.CreationTimestamp.Add(tokenExpireTime).Before(time.Now()) {
 		_ = k8sClient.Delete(ctx, latestSecret)
 	}
 

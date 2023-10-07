@@ -66,10 +66,11 @@ var (
 // K8sGPTReconciler reconciles a K8sGPT object
 type K8sGPTReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	Integrations *integrations.Integrations
-	SinkClient   *sinks.Client
-	K8sGPTClient *kclient.Client
+	Scheme          *runtime.Scheme
+	Integrations    *integrations.Integrations
+	SinkClient      *sinks.Client
+	K8sGPTClient    *kclient.Client
+	TokenExpireTime time.Duration
 }
 
 // +kubebuilder:rbac:groups=core.k8sgpt.ai,resources=k8sgpts,verbs=get;list;watch;create;update;patch;delete
@@ -122,7 +123,7 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return r.finishReconcile(nil, false)
 	}
 	// Check if ServiceBinding secret exists
-	backendInfo, err := backend.GetBackendInfo(ctx, r.Client, k8sgptConfig)
+	backendInfo, err := backend.GetBackendInfo(ctx, r.Client, k8sgptConfig, r.TokenExpireTime)
 	if err != nil {
 		return r.finishReconcile(err, true)
 	}
