@@ -165,7 +165,7 @@ func GetClusterRole(config v1alpha1.K8sGPT) (*r1.ClusterRole, error) {
 }
 
 // GetDeployment Create deployment with the latest K8sGPT image
-func GetDeployment(config v1alpha1.K8sGPT, backendInfo *backend.BackendInfo) (*appsv1.Deployment, error) {
+func GetDeployment(config v1alpha1.K8sGPT, backendInfo *backend.Info) (*appsv1.Deployment, error) {
 	if backendInfo == nil {
 		return &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -211,7 +211,7 @@ func GetDeployment(config v1alpha1.K8sGPT, backendInfo *backend.BackendInfo) (*a
 						{
 							Name:            "k8sgpt",
 							ImagePullPolicy: corev1.PullAlways,
-							Image:           "ghcr.io/k8sgpt-ai/k8sgpt:" + config.Spec.Version,
+							Image:           "ghcr.io/ruanxin/k8sgpt:" + config.Spec.Version,
 							Args: []string{
 								"serve",
 							},
@@ -325,7 +325,7 @@ func GetDeployment(config v1alpha1.K8sGPT, backendInfo *backend.BackendInfo) (*a
 }
 
 func Sync(ctx context.Context, c client.Client,
-	config v1alpha1.K8sGPT, i SyncOrDestroy, backendInfo *backend.BackendInfo) error {
+	config v1alpha1.K8sGPT, i SyncOrDestroy, backendInfo *backend.Info) error {
 
 	var objs []client.Object
 

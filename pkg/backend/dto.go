@@ -2,30 +2,40 @@ package backend
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/k8sgpt-ai/k8sgpt-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type BackendInfo struct {
+type Info struct {
 	BaseUrl      string
 	AccessSecret *v1alpha1.SecretRef
 }
 
-const ACCESS_SECRET_NAME = "ai-cred"
-const ACCESS_SECRET_TOKEN = "access-token"
-const ACCESS_SECRET_BASE_URL = "base_url"
+const (
+	accessSecretTokenKey   = "access-token"
+	accessSecretName       = "ai-cred"
+	accessSecretBaseUrl    = "base_url"
+	accessSecretLabelKey   = "operator.kyma-project.io/managed-by"
+	accessSecretLabelValue = "ai-sre"
+	expireTime             = 10 * time.Hour
+)
 
 var (
 	ErrNoSecretConfigured  = errors.New("references secret not configured")
@@ -36,8 +46,8 @@ var (
 	ErrRequestReject       = errors.New("request reject")
 )
 
-func GetBackendInfo(ctx context.Context, k8sClient client.Client, config *v1alpha1.K8sGPT) (*BackendInfo, error) {
-	backendInfo, err := getBackendInfoFromSecret(ctx, k8sClient, config.Namespace)
+func GetBackendInfo(ctx context.Context, k8sClient client.Client, config *v1alpha1.K8sGPT) (*Info, error) {
+	backendInfo, err := getBackendInfoFromSecret(ctx, k8sClient)
 	if err == nil {
 		return backendInfo, nil
 	}
@@ -68,21 +78,28 @@ func GetBackendInfo(ctx context.Context, k8sClient client.Client, config *v1alph
 	if !found {
 		return nil, ErrNoBackendUrl
 	}
-	if err := saveToSecret(ctx, k8sClient, config.Namespace, string(baseUrl), accessToken); err != nil {
+	if err := saveToSecret(ctx, k8sClient, config.Namespace, string(baseUrl), accessToken.AccessToken); err != nil {
 		return nil, err
 	}
 
 	return nil, ErrWaitForAccessSecret
 }
 
-func fetchAccessToken(ctx context.Context, oauthUrl, clientId, clientSecret string) (string, error) {
+func expiredSoon(timestamp v1.Time) bool {
+	if timestamp.Add(expireTime).Before(time.Now()) {
+		return true
+	}
+	return false
+}
+
+func fetchAccessToken(ctx context.Context, oauthUrl, clientId, clientSecret string) (*AccessToken, error) {
 	data := url.Values{}
 	data.Set("client_id", clientId)
 	data.Set("grant_type", "client_credentials")
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, oauthUrl+"/oauth/token", strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	basicAuth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", clientId, clientSecret)))
 	request.Header.Add("Authorization", fmt.Sprintf("Basic %s", basicAuth))
@@ -91,51 +108,94 @@ func fetchAccessToken(ctx context.Context, oauthUrl, clientId, clientSecret stri
 	clnt := &http.Client{}
 	response, err := clnt.Do(request)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if response.StatusCode != 200 {
-		return "", fmt.Errorf("%w: actual status code: %d", ErrRequestReject, response.StatusCode)
+		return nil, fmt.Errorf("%w: actual status code: %d", ErrRequestReject, response.StatusCode)
 	}
 	defer response.Body.Close()
 	bodyBytes, err := io.ReadAll(response.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	token := &Token{}
+	token := &AccessToken{}
 	err = yaml.Unmarshal(bodyBytes, token)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return token.AccessToken, nil
+	return token, nil
 }
 
 func saveToSecret(ctx context.Context, k8sClient client.Client, namespace, baseUrl, accessToken string) error {
 	secret := &corev1.Secret{}
-	secret.SetName(ACCESS_SECRET_NAME)
+	secret.SetName(generateSecretName(accessToken))
 	secret.SetNamespace(namespace)
 	if secret.StringData == nil {
 		secret.StringData = map[string]string{}
 	}
 
-	secret.StringData[ACCESS_SECRET_BASE_URL] = baseUrl
-	secret.StringData[ACCESS_SECRET_TOKEN] = accessToken
+	secret.StringData[accessSecretBaseUrl] = baseUrl
+	secret.StringData[accessSecretTokenKey] = accessToken
 	if err := k8sClient.Create(ctx, secret); err != nil {
 		return errors.New("can't create access secret")
 	}
 	return nil
 }
 
-func getBackendInfoFromSecret(ctx context.Context, k8sClient client.Client, namespace string) (*BackendInfo, error) {
-	secret := &corev1.Secret{}
+func generateSecretName(token string) string {
+	h := sha1.New()
+	h.Write([]byte(token))
+	return accessSecretName + hex.EncodeToString(h.Sum(nil))
+}
 
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: ACCESS_SECRET_NAME,
-		Namespace: namespace}, secret); err != nil {
-		return nil, err
+func getBackendInfoFromSecret(ctx context.Context, k8sClient client.Client) (*Info, error) {
+
+	secretList := corev1.SecretList{}
+	err := k8sClient.List(
+		ctx, &secretList, &client.ListOptions{
+			LabelSelector: labels.SelectorFromSet(labels.Set{accessSecretLabelKey: accessSecretLabelValue}),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list cred secrets: %w", err)
 	}
 
-	return &BackendInfo{
+	if len(secretList.Items) == 0 {
+		return nil, ErrWaitForAccessSecret
+	}
+
+	notSelected := true
+	latestSecret := &corev1.Secret{}
+
+	for _, secret := range secretList.Items {
+		secret := secret
+		if notSelected {
+			notSelected = false
+			latestSecret = &secret
+		} else if latestSecret.CreationTimestamp.Before(&secret.CreationTimestamp) {
+			latestSecret = &secret
+		}
+	}
+
+	deleteOldSecret(ctx, k8sClient, secretList, latestSecret)
+	if expiredSoon(latestSecret.CreationTimestamp) {
+		_ = k8sClient.Delete(ctx, latestSecret)
+	}
+
+	return &Info{
 		AccessSecret: &v1alpha1.SecretRef{
-			Name: ACCESS_SECRET_NAME,
-			Key:  ACCESS_SECRET_TOKEN,
-		}, BaseUrl: string(secret.Data[ACCESS_SECRET_BASE_URL])}, nil
+			Name: latestSecret.Name,
+			Key:  accessSecretTokenKey,
+		},
+		BaseUrl: string(latestSecret.Data[accessSecretBaseUrl]),
+	}, nil
+}
+
+func deleteOldSecret(ctx context.Context, k8sClient client.Client, secretList corev1.SecretList, latestSecret *corev1.Secret) {
+	for _, secret := range secretList.Items {
+		secret := secret
+		if secret.Name != latestSecret.Name {
+			_ = k8sClient.Delete(ctx, &secret)
+		}
+	}
 }
