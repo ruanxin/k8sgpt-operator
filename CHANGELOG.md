@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/ruanxin/k8sgpt-operator/compare/v1.0.0...v1.0.1) (2023-10-07)
+
+
+### Other
+
+* release 1.0.1 ([8375f2c](https://github.com/ruanxin/k8sgpt-operator/commit/8375f2cc1eca1b0398c46178778f0b98c1089e1d))
+
 ## [1.0.0](https://github.com/ruanxin/k8sgpt-operator/compare/v0.0.21...v1.0.0) (2023-10-07)
 
 
