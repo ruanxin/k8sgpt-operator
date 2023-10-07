@@ -133,7 +133,10 @@ func saveToSecret(ctx context.Context, k8sClient client.Client, namespace, baseU
 	if secret.StringData == nil {
 		secret.StringData = map[string]string{}
 	}
-
+	if secret.Labels == nil {
+		secret.Labels = map[string]string{}
+	}
+	secret.Labels[accessSecretLabelKey] = accessSecretLabelValue
 	secret.StringData[accessSecretBaseUrl] = baseUrl
 	secret.StringData[accessSecretTokenKey] = accessToken
 	if err := k8sClient.Create(ctx, secret); err != nil {

@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ghcr.io/ruanxin/k8sgpt-operator
-  newTag: dev-202309291554
+  newTag: latest
