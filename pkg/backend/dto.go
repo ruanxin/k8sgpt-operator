@@ -15,7 +15,6 @@ import (
 
 	"github.com/k8sgpt-ai/k8sgpt-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -51,7 +50,7 @@ func GetBackendInfo(ctx context.Context, k8sClient client.Client, config *v1alph
 	if err == nil {
 		return backendInfo, nil
 	}
-	if !k8sErrors.IsNotFound(err) {
+	if !errors.Is(ErrWaitForAccessSecret, err) {
 		return nil, err
 	}
 
