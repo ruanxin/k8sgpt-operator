@@ -5,6 +5,8 @@ metadata:
   namespace: ai-sre
 spec:
   ai:
+    enabled: true
+    anonymized: false
     secret:
       name: openai-service
   version: v1.0.1

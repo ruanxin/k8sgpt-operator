@@ -35,7 +35,7 @@ func (c *Client) ProcessAnalysis(deployment v1.Deployment, config *v1alpha1.K8sG
 	if err != nil {
 		return nil, err
 	}
-
+	fmt.Printf("res.Results: %s\n", jsonBytes)
 	err = json.Unmarshal(jsonBytes, &target)
 	if err != nil {
 		return nil, err
