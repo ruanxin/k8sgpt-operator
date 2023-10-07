@@ -79,6 +79,7 @@ type K8sGPTSpec struct {
 const (
 	OpenAI      = "openai"
 	AzureOpenAI = "azureopenai"
+	BTPOpenAI   = "btpopenai"
 	LocalAI     = "localai"
 )
 

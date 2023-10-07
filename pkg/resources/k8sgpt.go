@@ -222,7 +222,7 @@ func GetDeployment(config v1alpha1.K8sGPT, backendInfo *backend.Info) (*appsv1.D
 								},
 								{
 									Name:  "K8SGPT_BACKEND",
-									Value: v1alpha1.AzureOpenAI,
+									Value: v1alpha1.BTPOpenAI,
 								},
 								{
 									Name:  "XDG_CONFIG_HOME",
