@@ -22,7 +22,9 @@ import (
 
 	corev1alpha1 "github.com/k8sgpt-ai/k8sgpt-operator/api/v1alpha1"
 	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/backend"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	kclient "github.com/k8sgpt-ai/k8sgpt-operator/pkg/client"
 	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/integrations"
@@ -94,6 +96,22 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	err = r.reconcile(ctx, k8sgptConfig)
+
+	if err != nil {
+		r.setStatusForObjectInstance(ctx, k8sgptConfig, k8sgptConfig.Status.
+			WithState(corev1alpha1.StateError).
+			WithInstallConditionStatus(metav1.ConditionFalse, k8sgptConfig.GetGeneration()))
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: ReconcileSuccessInterval},
+		r.setStatusForObjectInstance(ctx, k8sgptConfig, k8sgptConfig.Status.
+			WithState(corev1alpha1.StateReady).
+			WithInstallConditionStatus(metav1.ConditionTrue, k8sgptConfig.GetGeneration()))
+}
+
+func (r *K8sGPTReconciler) reconcile(ctx context.Context,
+	k8sgptConfig *corev1alpha1.K8sGPT) error {
 	// Add a finaliser if there isn't one
 	if k8sgptConfig.ObjectMeta.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
@@ -103,7 +121,7 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			controllerutil.AddFinalizer(k8sgptConfig, FinalizerName)
 			if err := r.Update(ctx, k8sgptConfig); err != nil {
 				k8sgptReconcileErrorCount.Inc()
-				return r.finishReconcile(err, false)
+				return err
 			}
 		}
 	} else {
@@ -114,21 +132,21 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			err := resources.Sync(ctx, r.Client, *k8sgptConfig, resources.DestroyOp, nil)
 			if err != nil {
 				k8sgptReconcileErrorCount.Inc()
-				return r.finishReconcile(err, false)
+				return err
 			}
 			controllerutil.RemoveFinalizer(k8sgptConfig, FinalizerName)
 			if err := r.Update(ctx, k8sgptConfig); err != nil {
 				k8sgptReconcileErrorCount.Inc()
-				return r.finishReconcile(err, false)
+				return err
 			}
 		}
 		// Stop reconciliation as the item is being deleted
-		return r.finishReconcile(nil, false)
+		return nil
 	}
 	// Check if ServiceBinding secret exists
 	backendInfo, err := backend.GetBackendInfo(ctx, r.Client, k8sgptConfig, r.TokenExpireTime)
 	if err != nil {
-		return r.finishReconcile(err, true)
+		return err
 	}
 	// Check and see if the instance is new or has a K8sGPT deployment in flight
 	deployment := v1.Deployment{}
@@ -136,12 +154,12 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		Name: resources.DeploymentName}, &deployment)
 	if client.IgnoreNotFound(err) != nil {
 		k8sgptReconcileErrorCount.Inc()
-		return r.finishReconcile(err, false)
+		return err
 	}
 	err = resources.Sync(ctx, r.Client, *k8sgptConfig, resources.SyncOp, backendInfo)
 	if err != nil {
 		k8sgptReconcileErrorCount.Inc()
-		return r.finishReconcile(err, false)
+		return err
 	}
 
 	if deployment.Status.ReadyReplicas > 0 {
@@ -156,17 +174,17 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			err = r.Update(ctx, &deployment)
 			if err != nil {
 				k8sgptReconcileErrorCount.Inc()
-				return r.finishReconcile(err, false)
+				return err
 			}
 
-			return r.finishReconcile(nil, false)
+			return nil
 		}
 
 		// If the deployment is active, we will query it directly for analysis data
 		address, err := kclient.GenerateAddress(ctx, r.Client, k8sgptConfig)
 		if err != nil {
 			k8sgptReconcileErrorCount.Inc()
-			return r.finishReconcile(err, false)
+			return err
 		}
 		// Log address
 		fmt.Printf("K8sGPT address: %s\n", address)
@@ -174,7 +192,7 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		k8sgptClient, err := kclient.NewClient(address)
 		if err != nil {
 			k8sgptReconcileErrorCount.Inc()
-			return r.finishReconcile(err, false)
+			return err
 		}
 
 		defer k8sgptClient.Close()
@@ -184,21 +202,21 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			err = k8sgptClient.AddConfig(k8sgptConfig)
 			if err != nil {
 				k8sgptReconcileErrorCount.Inc()
-				return r.finishReconcile(err, false)
+				return err
 			}
 		}
 
 		response, err := k8sgptClient.ProcessAnalysis(deployment, k8sgptConfig)
 		if err != nil {
 			k8sgptReconcileErrorCount.Inc()
-			return r.finishReconcile(err, false)
+			return err
 		}
 		// Parse the k8sgpt-deployment response into a list of results
 		k8sgptNumberOfResults.Set(float64(len(response.Results)))
 		rawResults, err := resources.MapResults(*r.Integrations, response.Results, *k8sgptConfig)
 		if err != nil {
 			k8sgptReconcileErrorCount.Inc()
-			return r.finishReconcile(err, false)
+			return err
 		}
 		// Prior to creating or updating any results we will delete any stale results that
 		// no longer are relevent, we can do this by using the resultSpec composed name against
@@ -207,7 +225,7 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		err = r.List(ctx, resultList)
 		if err != nil {
 			k8sgptReconcileErrorCount.Inc()
-			return r.finishReconcile(err, false)
+			return err
 		}
 		if len(resultList.Items) > 0 {
 			// If the result does not exist in the map we will delete it
@@ -217,7 +235,7 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 					err = r.Delete(ctx, &result)
 					if err != nil {
 						k8sgptReconcileErrorCount.Inc()
-						return r.finishReconcile(err, false)
+						return err
 					} else {
 						k8sgptNumberOfResultsByType.With(prometheus.Labels{
 							"kind": result.Spec.Kind,
@@ -233,7 +251,7 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			operation, err := resources.CreateOrUpdateResult(ctx, r.Client, result)
 			if err != nil {
 				k8sgptReconcileErrorCount.Inc()
-				return r.finishReconcile(err, false)
+				return err
 
 			}
 			// Update metrics
@@ -252,10 +270,10 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		// and when user configures a sink for the first time
 		latestResultList := &corev1alpha1.ResultList{}
 		if err := r.List(ctx, latestResultList); err != nil {
-			return r.finishReconcile(err, false)
+			return err
 		}
 		if len(latestResultList.Items) == 0 {
-			return r.finishReconcile(nil, false)
+			return nil
 		}
 		sinkEnabled := k8sgptConfig.Spec.Sink != nil && k8sgptConfig.Spec.Sink.Type != "" && k8sgptConfig.Spec.Sink.Endpoint != ""
 
@@ -268,14 +286,14 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		for _, result := range latestResultList.Items {
 			var res corev1alpha1.Result
 			if err := r.Get(ctx, client.ObjectKey{Namespace: result.Namespace, Name: result.Name}, &res); err != nil {
-				return r.finishReconcile(err, false)
+				return err
 			}
 
 			if sinkEnabled {
 				if res.Status.LifeCycle != string(resources.NoOpResult) || res.Status.Webhook == "" {
 					if err := sinkType.Emit(res.Spec); err != nil {
 						k8sgptReconcileErrorCount.Inc()
-						return r.finishReconcile(err, false)
+						return err
 					}
 					res.Status.Webhook = k8sgptConfig.Spec.Sink.Endpoint
 				}
@@ -285,40 +303,25 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			}
 			if err := r.Status().Update(ctx, &res); err != nil {
 				k8sgptReconcileErrorCount.Inc()
-				return r.finishReconcile(err, false)
+				return err
 			}
 		}
 	}
 
-	return r.finishReconcile(nil, false)
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *K8sGPTReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	predicates := predicate.Or(predicate.GenerationChangedPredicate{}, predicate.LabelChangedPredicate{})
 	c := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.K8sGPT{}).
+		WithEventFilter(predicates).
 		Complete(r)
 
 	metrics.Registry.MustRegister(k8sgptReconcileErrorCount, k8sgptNumberOfResults, k8sgptNumberOfResultsByType)
 
 	return c
-}
-
-func (r *K8sGPTReconciler) finishReconcile(err error, requeueImmediate bool) (ctrl.Result, error) {
-	if err != nil {
-		interval := ReconcileErrorInterval
-		if requeueImmediate {
-			interval = 0
-		}
-		fmt.Printf("Finished Reconciling k8sGPT with error: %s\n", err.Error())
-		return ctrl.Result{Requeue: true, RequeueAfter: interval}, err
-	}
-	interval := ReconcileSuccessInterval
-	if requeueImmediate {
-		interval = 0
-	}
-	fmt.Println("Finished Reconciling k8sGPT")
-	return ctrl.Result{Requeue: true, RequeueAfter: interval}, nil
 }
 
 func (r *K8sGPTReconciler) setStatusForObjectInstance(ctx context.Context, objectInstance *corev1alpha1.K8sGPT,

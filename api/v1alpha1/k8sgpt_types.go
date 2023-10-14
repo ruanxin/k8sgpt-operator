@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -83,9 +84,18 @@ const (
 	LocalAI     = "localai"
 )
 
+var (
+	ConditionTypeInstallation = "Installation"
+	ConditionReasonReady      = "Ready"
+)
+
 // K8sGPTStatus defines the observed state of K8sGPT
 type K8sGPTStatus struct {
 	Status `json:",inline"`
+
+	// Conditions contain a set of conditionals to determine the State of Status.
+	// If all Conditions are met, State is expected to be in StateReady.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -111,4 +121,30 @@ type K8sGPTList struct {
 
 func init() {
 	SchemeBuilder.Register(&K8sGPT{}, &K8sGPTList{})
+}
+
+func (s *K8sGPTStatus) WithState(state State) *K8sGPTStatus {
+	s.State = state
+	return s
+}
+
+func (s *K8sGPTStatus) WithInstallConditionStatus(status metav1.ConditionStatus, objGeneration int64) *K8sGPTStatus {
+	if s.Conditions == nil {
+		s.Conditions = make([]metav1.Condition, 0, 1)
+	}
+
+	condition := meta.FindStatusCondition(s.Conditions, ConditionTypeInstallation)
+
+	if condition == nil {
+		condition = &metav1.Condition{
+			Type:    ConditionTypeInstallation,
+			Reason:  ConditionReasonReady,
+			Message: "installation is ready and resources can be used",
+		}
+	}
+
+	condition.Status = status
+	condition.ObservedGeneration = objGeneration
+	meta.SetStatusCondition(&s.Conditions, *condition)
+	return s
 }
