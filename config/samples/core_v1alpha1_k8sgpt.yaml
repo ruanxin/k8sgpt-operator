@@ -6,7 +6,8 @@ metadata:
 spec:
   ai:
     enabled: true
+    model: gpt-4
     anonymized: false
     secret:
       name: openai-service
-  version: v1.0.1
+  version: dev-202310072310

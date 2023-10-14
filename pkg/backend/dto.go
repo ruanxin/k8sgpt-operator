@@ -138,7 +138,7 @@ func saveToSecret(ctx context.Context, k8sClient client.Client, namespace, baseU
 func generateSecretName(token string) string {
 	h := sha1.New()
 	h.Write([]byte(token))
-	return accessSecretName + hex.EncodeToString(h.Sum(nil))
+	return fmt.Sprintf("%s-%s", accessSecretName, hex.EncodeToString(h.Sum(nil)))
 }
 
 func getBackendInfoFromSecret(ctx context.Context, k8sClient client.Client, tokenExpireTime time.Duration) (*Info, error) {

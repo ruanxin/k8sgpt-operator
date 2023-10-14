@@ -43,6 +43,8 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
+const operatorName = "ai-sre"
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -125,6 +127,7 @@ func main() {
 		TokenExpireTime: tokenExpireTime,
 		Integrations:    integration,
 		SinkClient:      sinkClient,
+		EventRecorder:   mgr.GetEventRecorderFor(operatorName),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "K8sGPT")
 		os.Exit(1)

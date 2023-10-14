@@ -22,6 +22,7 @@ import (
 
 	corev1alpha1 "github.com/k8sgpt-ai/k8sgpt-operator/api/v1alpha1"
 	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/backend"
+	"k8s.io/client-go/tools/record"
 
 	kclient "github.com/k8sgpt-ai/k8sgpt-operator/pkg/client"
 	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/integrations"
@@ -42,6 +43,7 @@ const (
 	FinalizerName            = "k8sgpt.ai/finalizer"
 	ReconcileErrorInterval   = 10 * time.Second
 	ReconcileSuccessInterval = 30 * time.Second
+	fieldOwner               = "ai-sre.kyma-project.io/owner"
 )
 
 var (
@@ -71,6 +73,7 @@ type K8sGPTReconciler struct {
 	SinkClient      *sinks.Client
 	K8sGPTClient    *kclient.Client
 	TokenExpireTime time.Duration
+	record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=core.k8sgpt.ai,resources=k8sgpts,verbs=get;list;watch;create;update;patch;delete
@@ -316,4 +319,26 @@ func (r *K8sGPTReconciler) finishReconcile(err error, requeueImmediate bool) (ct
 	}
 	fmt.Println("Finished Reconciling k8sGPT")
 	return ctrl.Result{Requeue: true, RequeueAfter: interval}, nil
+}
+
+func (r *K8sGPTReconciler) setStatusForObjectInstance(ctx context.Context, objectInstance *corev1alpha1.K8sGPT,
+	status *corev1alpha1.K8sGPTStatus,
+) error {
+	objectInstance.Status = *status
+
+	if err := r.ssaStatus(ctx, objectInstance); err != nil {
+		r.Event(objectInstance, "Warning", "ErrorUpdatingStatus", fmt.Sprintf("updating state to %v", string(status.State)))
+		return fmt.Errorf("error while updating status %s to: %w", status.State, err)
+	}
+
+	r.Event(objectInstance, "Normal", "StatusUpdated", fmt.Sprintf("updating state to %v", string(status.State)))
+	return nil
+}
+
+// ssaStatus patches status using SSA on the passed object.
+func (r *K8sGPTReconciler) ssaStatus(ctx context.Context, obj client.Object) error {
+	obj.SetManagedFields(nil)
+	obj.SetResourceVersion("")
+	return r.Status().Patch(ctx, obj, client.Apply,
+		&client.SubResourcePatchOptions{PatchOptions: client.PatchOptions{FieldManager: fieldOwner}})
 }

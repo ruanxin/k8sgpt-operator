@@ -85,8 +85,7 @@ const (
 
 // K8sGPTStatus defines the observed state of K8sGPT
 type K8sGPTStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	Status `json:",inline"`
 }
 
 //+kubebuilder:object:root=true

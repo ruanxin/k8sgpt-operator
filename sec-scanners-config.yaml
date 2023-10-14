@@ -1,0 +1,8 @@
+module-name: ai-sre
+rc-tag: 0.5.0
+dev-branch: main
+whitesource:
+  language: golang-mod
+  exclude:
+    - "**/test/**"
+    - "**/*_test.go"

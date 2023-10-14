@@ -98,6 +98,19 @@ spec:
             type: object
           status:
             description: K8sGPTStatus defines the observed state of K8sGPT
+            properties:
+              state:
+                description: State signifies current state of Module CR.
+                enum:
+                - Processing
+                - Deleting
+                - Ready
+                - Error
+                - Warning
+                - ""
+                type: string
+            required:
+            - state
             type: object
         type: object
     served: true
