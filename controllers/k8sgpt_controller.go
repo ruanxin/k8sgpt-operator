@@ -96,22 +96,67 @@ func (r *K8sGPTReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	err = r.reconcile(ctx, k8sgptConfig)
+	return r.processState(ctx, k8sgptConfig)
 
+}
+
+func (r *K8sGPTReconciler) processState(ctx context.Context, k8sgptConfig *corev1alpha1.K8sGPT) (ctrl.Result, error) {
+	switch k8sgptConfig.Status.State {
+	case "":
+		return r.handleInitialState(ctx, k8sgptConfig)
+	case corev1alpha1.StateDeleting:
+		return r.handleDeletingState(ctx, k8sgptConfig)
+	default:
+		return r.handleProcessingState(ctx, k8sgptConfig)
+	}
+}
+
+func (r *K8sGPTReconciler) handleProcessingState(ctx context.Context, k8sgptConfig *corev1alpha1.K8sGPT) (ctrl.Result, error) {
+	err := r.reconcile(ctx, k8sgptConfig)
 	if err != nil {
-		r.setStatusForObjectInstance(ctx, k8sgptConfig, k8sgptConfig.Status.
-			WithState(corev1alpha1.StateError).
-			WithInstallConditionStatus(metav1.ConditionFalse, k8sgptConfig.GetGeneration()))
+		return ctrl.Result{Requeue: true}, r.setStatus(ctx, k8sgptConfig, corev1alpha1.StateError, err.Error())
+	}
+
+	if k8sgptConfig.Status.State == corev1alpha1.StateReady || k8sgptConfig.Status.State == corev1alpha1.StateWarning {
+		return ctrl.Result{RequeueAfter: ReconcileSuccessInterval}, nil
+	}
+	return ctrl.Result{Requeue: true}, nil
+}
+
+func (r *K8sGPTReconciler) handleInitialState(ctx context.Context, k8sgptConfig *corev1alpha1.K8sGPT) (ctrl.Result, error) {
+	if err := r.setStatus(ctx, k8sgptConfig, corev1alpha1.StateProcessing, "started processing"); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: ReconcileSuccessInterval},
-		r.setStatusForObjectInstance(ctx, k8sgptConfig, k8sgptConfig.Status.
-			WithState(corev1alpha1.StateReady).
-			WithInstallConditionStatus(metav1.ConditionTrue, k8sgptConfig.GetGeneration()))
+	return ctrl.Result{Requeue: true}, nil
+}
+
+func (r *K8sGPTReconciler) handleDeletingState(ctx context.Context, k8sgptConfig *corev1alpha1.K8sGPT) (ctrl.Result, error) {
+	// The object is being deleted
+	if utils.ContainsString(k8sgptConfig.GetFinalizers(), FinalizerName) {
+
+		// Delete any external resources associated with the instance
+		err := resources.Sync(ctx, r.Client, *k8sgptConfig, resources.DestroyOp, nil)
+		if err != nil {
+			k8sgptReconcileErrorCount.Inc()
+			return ctrl.Result{}, err
+		}
+		controllerutil.RemoveFinalizer(k8sgptConfig, FinalizerName)
+		if err := r.Update(ctx, k8sgptConfig); err != nil {
+			k8sgptReconcileErrorCount.Inc()
+			return ctrl.Result{}, err
+		}
+	}
+	// Stop reconciliation as the item is being deleted
+	return ctrl.Result{}, nil
 }
 
 func (r *K8sGPTReconciler) reconcile(ctx context.Context,
 	k8sgptConfig *corev1alpha1.K8sGPT) error {
+
+	if !k8sgptConfig.DeletionTimestamp.IsZero() && k8sgptConfig.Status.State != corev1alpha1.StateDeleting {
+		return r.setStatus(ctx, k8sgptConfig, corev1alpha1.StateDeleting, "waiting for modules to be deleted")
+	}
+
 	// Add a finaliser if there isn't one
 	if k8sgptConfig.ObjectMeta.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
@@ -124,25 +169,8 @@ func (r *K8sGPTReconciler) reconcile(ctx context.Context,
 				return err
 			}
 		}
-	} else {
-		// The object is being deleted
-		if utils.ContainsString(k8sgptConfig.GetFinalizers(), FinalizerName) {
-
-			// Delete any external resources associated with the instance
-			err := resources.Sync(ctx, r.Client, *k8sgptConfig, resources.DestroyOp, nil)
-			if err != nil {
-				k8sgptReconcileErrorCount.Inc()
-				return err
-			}
-			controllerutil.RemoveFinalizer(k8sgptConfig, FinalizerName)
-			if err := r.Update(ctx, k8sgptConfig); err != nil {
-				k8sgptReconcileErrorCount.Inc()
-				return err
-			}
-		}
-		// Stop reconciliation as the item is being deleted
-		return nil
 	}
+
 	// Check if ServiceBinding secret exists
 	backendInfo, err := backend.GetBackendInfo(ctx, r.Client, k8sgptConfig, r.TokenExpireTime)
 	if err != nil {
@@ -162,153 +190,154 @@ func (r *K8sGPTReconciler) reconcile(ctx context.Context,
 		return err
 	}
 
-	if deployment.Status.ReadyReplicas > 0 {
+	if deployment.Status.ReadyReplicas == 0 {
+		return r.setStatus(ctx, k8sgptConfig, corev1alpha1.StateProcessing, "waiting for deployment ready")
+	}
 
-		// Check the version of the deployment image matches the version set in the K8sGPT CR
-		imageURI := deployment.Spec.Template.Spec.Containers[0].Image
-		imageVersion := strings.Split(imageURI, ":")[1]
-		if imageVersion != k8sgptConfig.Spec.Version {
-			// Update the deployment image
-			deployment.Spec.Template.Spec.Containers[0].Image = fmt.Sprintf("%s:%s",
-				strings.Split(imageURI, ":")[0], k8sgptConfig.Spec.Version)
-			err = r.Update(ctx, &deployment)
-			if err != nil {
-				k8sgptReconcileErrorCount.Inc()
-				return err
-			}
-
-			return nil
-		}
-
-		// If the deployment is active, we will query it directly for analysis data
-		address, err := kclient.GenerateAddress(ctx, r.Client, k8sgptConfig)
-		if err != nil {
-			k8sgptReconcileErrorCount.Inc()
-			return err
-		}
-		// Log address
-		fmt.Printf("K8sGPT address: %s\n", address)
-
-		k8sgptClient, err := kclient.NewClient(address)
+	// Check the version of the deployment image matches the version set in the K8sGPT CR
+	imageURI := deployment.Spec.Template.Spec.Containers[0].Image
+	imageVersion := strings.Split(imageURI, ":")[1]
+	if imageVersion != k8sgptConfig.Spec.Version {
+		// Update the deployment image
+		deployment.Spec.Template.Spec.Containers[0].Image = fmt.Sprintf("%s:%s",
+			strings.Split(imageURI, ":")[0], k8sgptConfig.Spec.Version)
+		err = r.Update(ctx, &deployment)
 		if err != nil {
 			k8sgptReconcileErrorCount.Inc()
 			return err
 		}
 
-		defer k8sgptClient.Close()
+		return r.setStatus(ctx, k8sgptConfig, corev1alpha1.StateProcessing, "update deployment image")
+	}
 
-		// Configure the k8sgpt deployment if required
-		if k8sgptConfig.Spec.RemoteCache != nil {
-			err = k8sgptClient.AddConfig(k8sgptConfig)
-			if err != nil {
-				k8sgptReconcileErrorCount.Inc()
-				return err
-			}
-		}
+	// If the deployment is active, we will query it directly for analysis data
+	address, err := kclient.GenerateAddress(ctx, r.Client, k8sgptConfig)
+	if err != nil {
+		k8sgptReconcileErrorCount.Inc()
+		return err
+	}
+	// Log address
+	fmt.Printf("K8sGPT address: %s\n", address)
 
-		response, err := k8sgptClient.ProcessAnalysis(deployment, k8sgptConfig)
+	k8sgptClient, err := kclient.NewClient(address)
+	if err != nil {
+		k8sgptReconcileErrorCount.Inc()
+		return err
+	}
+
+	defer k8sgptClient.Close()
+
+	// Configure the k8sgpt deployment if required
+	if k8sgptConfig.Spec.RemoteCache != nil {
+		err = k8sgptClient.AddConfig(k8sgptConfig)
 		if err != nil {
 			k8sgptReconcileErrorCount.Inc()
 			return err
-		}
-		// Parse the k8sgpt-deployment response into a list of results
-		k8sgptNumberOfResults.Set(float64(len(response.Results)))
-		rawResults, err := resources.MapResults(*r.Integrations, response.Results, *k8sgptConfig)
-		if err != nil {
-			k8sgptReconcileErrorCount.Inc()
-			return err
-		}
-		// Prior to creating or updating any results we will delete any stale results that
-		// no longer are relevent, we can do this by using the resultSpec composed name against
-		// the custom resource name
-		resultList := &corev1alpha1.ResultList{}
-		err = r.List(ctx, resultList)
-		if err != nil {
-			k8sgptReconcileErrorCount.Inc()
-			return err
-		}
-		if len(resultList.Items) > 0 {
-			// If the result does not exist in the map we will delete it
-			for _, result := range resultList.Items {
-				fmt.Printf("Checking if %s is still relevant\n", result.Name)
-				if _, ok := rawResults[result.Name]; !ok {
-					err = r.Delete(ctx, &result)
-					if err != nil {
-						k8sgptReconcileErrorCount.Inc()
-						return err
-					} else {
-						k8sgptNumberOfResultsByType.With(prometheus.Labels{
-							"kind": result.Spec.Kind,
-							"name": result.Name,
-						}).Dec()
-					}
-				}
-			}
-		}
-		// At this point we are able to loop through our rawResults and create them or update
-		// them as needed
-		for _, result := range rawResults {
-			operation, err := resources.CreateOrUpdateResult(ctx, r.Client, result)
-			if err != nil {
-				k8sgptReconcileErrorCount.Inc()
-				return err
-
-			}
-			// Update metrics
-			if operation == resources.CreatedResult {
-				k8sgptNumberOfResultsByType.With(prometheus.Labels{
-					"kind": result.Spec.Kind,
-					"name": result.Name,
-				}).Inc()
-			} else if operation == resources.UpdatedResult {
-				fmt.Printf("Updated successfully %s \n", result.Name)
-			}
-
-		}
-
-		// We emit when result Status is not historical
-		// and when user configures a sink for the first time
-		latestResultList := &corev1alpha1.ResultList{}
-		if err := r.List(ctx, latestResultList); err != nil {
-			return err
-		}
-		if len(latestResultList.Items) == 0 {
-			return nil
-		}
-		sinkEnabled := k8sgptConfig.Spec.Sink != nil && k8sgptConfig.Spec.Sink.Type != "" && k8sgptConfig.Spec.Sink.Endpoint != ""
-
-		var sinkType sinks.ISink
-		if sinkEnabled {
-			sinkType = sinks.NewSink(k8sgptConfig.Spec.Sink.Type)
-			sinkType.Configure(*k8sgptConfig, *r.SinkClient)
-		}
-
-		for _, result := range latestResultList.Items {
-			var res corev1alpha1.Result
-			if err := r.Get(ctx, client.ObjectKey{Namespace: result.Namespace, Name: result.Name}, &res); err != nil {
-				return err
-			}
-
-			if sinkEnabled {
-				if res.Status.LifeCycle != string(resources.NoOpResult) || res.Status.Webhook == "" {
-					if err := sinkType.Emit(res.Spec); err != nil {
-						k8sgptReconcileErrorCount.Inc()
-						return err
-					}
-					res.Status.Webhook = k8sgptConfig.Spec.Sink.Endpoint
-				}
-			} else {
-				// Remove the Webhook status from results
-				res.Status.Webhook = ""
-			}
-			if err := r.Status().Update(ctx, &res); err != nil {
-				k8sgptReconcileErrorCount.Inc()
-				return err
-			}
 		}
 	}
 
-	return nil
+	response, err := k8sgptClient.ProcessAnalysis(deployment, k8sgptConfig)
+	if err != nil {
+		k8sgptReconcileErrorCount.Inc()
+		return err
+	}
+	// Parse the k8sgpt-deployment response into a list of results
+	k8sgptNumberOfResults.Set(float64(len(response.Results)))
+	rawResults, err := resources.MapResults(*r.Integrations, response.Results, *k8sgptConfig)
+	if err != nil {
+		k8sgptReconcileErrorCount.Inc()
+		return err
+	}
+	// Prior to creating or updating any results we will delete any stale results that
+	// no longer are relevent, we can do this by using the resultSpec composed name against
+	// the custom resource name
+	resultList := &corev1alpha1.ResultList{}
+	err = r.List(ctx, resultList)
+	if err != nil {
+		k8sgptReconcileErrorCount.Inc()
+		return err
+	}
+	if len(resultList.Items) > 0 {
+		// If the result does not exist in the map we will delete it
+		for _, result := range resultList.Items {
+			fmt.Printf("Checking if %s is still relevant\n", result.Name)
+			if _, ok := rawResults[result.Name]; !ok {
+				err = r.Delete(ctx, &result)
+				if err != nil {
+					k8sgptReconcileErrorCount.Inc()
+					return err
+				} else {
+					k8sgptNumberOfResultsByType.With(prometheus.Labels{
+						"kind": result.Spec.Kind,
+						"name": result.Name,
+					}).Dec()
+				}
+			}
+		}
+	}
+	// At this point we are able to loop through our rawResults and create them or update
+	// them as needed
+	for _, result := range rawResults {
+		operation, err := resources.CreateOrUpdateResult(ctx, r.Client, result)
+		if err != nil {
+			k8sgptReconcileErrorCount.Inc()
+			return err
+
+		}
+		// Update metrics
+		if operation == resources.CreatedResult {
+			k8sgptNumberOfResultsByType.With(prometheus.Labels{
+				"kind": result.Spec.Kind,
+				"name": result.Name,
+			}).Inc()
+		} else if operation == resources.UpdatedResult {
+			fmt.Printf("Updated successfully %s \n", result.Name)
+		}
+
+	}
+
+	// We emit when result Status is not historical
+	// and when user configures a sink for the first time
+	latestResultList := &corev1alpha1.ResultList{}
+	if err := r.List(ctx, latestResultList); err != nil {
+		return err
+	}
+	if len(latestResultList.Items) == 0 {
+		return r.setStatus(ctx, k8sgptConfig, k8sgptConfig.Status.State, "no result received")
+	}
+	sinkEnabled := k8sgptConfig.Spec.Sink != nil && k8sgptConfig.Spec.Sink.Type != "" && k8sgptConfig.Spec.Sink.Endpoint != ""
+
+	var sinkType sinks.ISink
+	if sinkEnabled {
+		sinkType = sinks.NewSink(k8sgptConfig.Spec.Sink.Type)
+		sinkType.Configure(*k8sgptConfig, *r.SinkClient)
+	}
+
+	for _, result := range latestResultList.Items {
+		var res corev1alpha1.Result
+		if err := r.Get(ctx, client.ObjectKey{Namespace: result.Namespace, Name: result.Name}, &res); err != nil {
+			return err
+		}
+
+		if sinkEnabled {
+			if res.Status.LifeCycle != resources.NoOpResult || res.Status.Webhook == "" {
+				if err := sinkType.Emit(res.Spec); err != nil {
+					k8sgptReconcileErrorCount.Inc()
+					return err
+				}
+				res.Status.Webhook = k8sgptConfig.Spec.Sink.Endpoint
+			}
+		} else {
+			// Remove the Webhook status from results
+			res.Status.Webhook = ""
+		}
+		if err := r.Status().Update(ctx, &res); err != nil {
+			k8sgptReconcileErrorCount.Inc()
+			return err
+		}
+	}
+
+	return r.setStatus(ctx, k8sgptConfig, corev1alpha1.StateReady, "result received")
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -324,24 +353,30 @@ func (r *K8sGPTReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return c
 }
 
-func (r *K8sGPTReconciler) setStatusForObjectInstance(ctx context.Context, objectInstance *corev1alpha1.K8sGPT,
-	status *corev1alpha1.K8sGPTStatus,
+func (r *K8sGPTReconciler) setStatus(ctx context.Context, k8sGPT *corev1alpha1.K8sGPT,
+	newState corev1alpha1.State, message string,
 ) error {
-	objectInstance.Status = *status
-
-	if err := r.ssaStatus(ctx, objectInstance); err != nil {
-		r.Event(objectInstance, "Warning", "ErrorUpdatingStatus", fmt.Sprintf("updating state to %v", string(status.State)))
-		return fmt.Errorf("error while updating status %s to: %w", status.State, err)
+	k8sGPT.Status.State = newState
+	switch newState {
+	case corev1alpha1.StateReady, corev1alpha1.StateWarning:
+		k8sGPT.Status.SetInstallConditionStatus(metav1.ConditionTrue)
+	case "":
+		k8sGPT.Status.SetInstallConditionStatus(metav1.ConditionUnknown)
+	case corev1alpha1.StateDeleting:
+	case corev1alpha1.StateError:
+	case corev1alpha1.StateProcessing:
+	default:
+		k8sGPT.Status.SetInstallConditionStatus(metav1.ConditionFalse)
+	}
+	k8sGPT.ManagedFields = nil
+	k8sGPT.Status.LastOperation = corev1alpha1.LastOperation{
+		Operation:      message,
+		LastUpdateTime: metav1.NewTime(time.Now()),
+	}
+	if err := r.Status().Patch(ctx, k8sGPT, client.Apply,
+		&client.SubResourcePatchOptions{PatchOptions: client.PatchOptions{FieldManager: fieldOwner}}); err != nil {
+		return fmt.Errorf("error while updating status %s to: %w", newState, err)
 	}
 
-	r.Event(objectInstance, "Normal", "StatusUpdated", fmt.Sprintf("updating state to %v", string(status.State)))
 	return nil
-}
-
-// ssaStatus patches status using SSA on the passed object.
-func (r *K8sGPTReconciler) ssaStatus(ctx context.Context, obj client.Object) error {
-	obj.SetManagedFields(nil)
-	obj.SetResourceVersion("")
-	return r.Status().Patch(ctx, obj, client.Apply,
-		&client.SubResourcePatchOptions{PatchOptions: client.PatchOptions{FieldManager: fieldOwner}})
 }

@@ -96,6 +96,13 @@ type K8sGPTStatus struct {
 	// Conditions contain a set of conditionals to determine the State of Status.
 	// If all Conditions are met, State is expected to be in StateReady.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	LastOperation `json:"lastOperation,omitempty"`
+}
+
+type LastOperation struct {
+	Operation      string      `json:"operation"`
+	LastUpdateTime metav1.Time `json:"lastUpdateTime,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -123,14 +130,9 @@ func init() {
 	SchemeBuilder.Register(&K8sGPT{}, &K8sGPTList{})
 }
 
-func (s *K8sGPTStatus) WithState(state State) *K8sGPTStatus {
-	s.State = state
-	return s
-}
-
-func (s *K8sGPTStatus) WithInstallConditionStatus(status metav1.ConditionStatus, objGeneration int64) *K8sGPTStatus {
+func (s *K8sGPTStatus) SetInstallConditionStatus(status metav1.ConditionStatus) {
 	if s.Conditions == nil {
-		s.Conditions = make([]metav1.Condition, 0, 1)
+		s.Conditions = []metav1.Condition{}
 	}
 
 	condition := meta.FindStatusCondition(s.Conditions, ConditionTypeInstallation)
@@ -144,7 +146,5 @@ func (s *K8sGPTStatus) WithInstallConditionStatus(status metav1.ConditionStatus,
 	}
 
 	condition.Status = status
-	condition.ObservedGeneration = objGeneration
 	meta.SetStatusCondition(&s.Conditions, *condition)
-	return s
 }
