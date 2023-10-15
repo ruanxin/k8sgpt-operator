@@ -21,6 +21,10 @@ import (
 	"os"
 	"time"
 
+	"golang.org/x/time/rate"
+	"k8s.io/client-go/util/workqueue"
+	controllerRuntime "sigs.k8s.io/controller-runtime/pkg/controller"
+
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -57,12 +61,23 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var tokenExpireTime time.Duration
+	var failureBaseDelay, failureMaxDelay time.Duration
+	var rateLimiterBurst, rateLimiterFrequency int
 	flag.DurationVar(&tokenExpireTime, "token-expire-time", 11*time.Hour, "token expire time")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.IntVar(&rateLimiterBurst, "rate-limiter-burst", 200,
+		"Indicates the rateLimiterBurstDefault value for the bucket rate limiter.")
+	flag.IntVar(&rateLimiterFrequency, "rate-limiter-frequency", 30,
+		"Indicates the bucket rate limiter frequency, signifying no. of events per second.")
+	flag.DurationVar(&failureBaseDelay, "failure-base-delay", 100*time.Millisecond,
+		"Indicates the failure base delay in seconds for rate limiter.")
+	flag.DurationVar(&failureMaxDelay, "failure-max-delay", 10*time.Second,
+		"Indicates the failure max delay in seconds")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -121,6 +136,12 @@ func main() {
 	}
 	sinkClient := sinks.NewClient(sinkTimeout)
 
+	options := controllerRuntime.Options{}
+	options.RateLimiter = workqueue.NewMaxOfRateLimiter(
+		workqueue.NewItemExponentialFailureRateLimiter(failureBaseDelay, failureMaxDelay),
+		&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(rateLimiterFrequency), rateLimiterBurst)},
+	)
+
 	if err = (&controllers.K8sGPTReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
@@ -128,7 +149,7 @@ func main() {
 		Integrations:    integration,
 		SinkClient:      sinkClient,
 		EventRecorder:   mgr.GetEventRecorderFor(operatorName),
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(mgr, options); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "K8sGPT")
 		os.Exit(1)
 	}

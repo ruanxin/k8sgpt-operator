@@ -14,7 +14,14 @@ spec:
     singular: k8sgpt
   scope: Namespaced
   versions:
-  - name: v1alpha1
+    - additionalPrinterColumns:
+        - jsonPath: .status.state
+          name: State
+          type: string
+        - jsonPath: .metadata.creationTimestamp
+          name: Age
+          type: date
+      name: v1alpha1
     schema:
       openAPIV3Schema:
         description: K8sGPT is the Schema for the k8sgpts API
@@ -170,6 +177,16 @@ spec:
                     - type
                   type: object
                 type: array
+              lastOperation:
+                properties:
+                  lastUpdateTime:
+                    format: date-time
+                    type: string
+                  operation:
+                    type: string
+                required:
+                  - operation
+                type: object
               state:
                 description: State signifies current state of Module CR.
                 enum:

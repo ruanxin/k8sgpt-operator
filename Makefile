@@ -197,3 +197,7 @@ coverage: generate fmt vet manifests ## Run code coverage
 lint: ## Run golangci-lint against code.
 	GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANG_CI_LINT_VERSION)
 	$(LOCALBIN)/golangci-lint run --verbose -c .golangci.yaml
+
+.PHONY: build-manifests
+build-manifests: manifests kustomize
+	$(KUSTOMIZE) build config/default > ai-sre-operator.yaml

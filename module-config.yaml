@@ -1,7 +1,7 @@
 name: kyma-project.io/module/ai-sre
 channel: fast
 version: v1.0.0
-manifest: template-operator.yaml
+manifest: ai-sre-operator.yaml
 security: sec-scanners-config.yaml
 defaultCR: ./config/samples/core_v1alpha1_k8sgpt.yaml
 annotations:

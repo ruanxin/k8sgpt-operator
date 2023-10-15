@@ -24,6 +24,7 @@ import (
 	"github.com/k8sgpt-ai/k8sgpt-operator/pkg/backend"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
+	controllerRuntime "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	kclient "github.com/k8sgpt-ai/k8sgpt-operator/pkg/client"
@@ -303,7 +304,7 @@ func (r *K8sGPTReconciler) reconcile(ctx context.Context,
 		return err
 	}
 	if len(latestResultList.Items) == 0 {
-		return r.setStatus(ctx, k8sgptConfig, k8sgptConfig.Status.State, "no result received")
+		return r.setStatus(ctx, k8sgptConfig, corev1alpha1.StateReady, "no result received")
 	}
 	sinkEnabled := k8sgptConfig.Spec.Sink != nil && k8sgptConfig.Spec.Sink.Type != "" && k8sgptConfig.Spec.Sink.Endpoint != ""
 
@@ -341,11 +342,12 @@ func (r *K8sGPTReconciler) reconcile(ctx context.Context,
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *K8sGPTReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *K8sGPTReconciler) SetupWithManager(mgr ctrl.Manager, options controllerRuntime.Options) error {
 	predicates := predicate.Or(predicate.GenerationChangedPredicate{}, predicate.LabelChangedPredicate{})
 	c := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.K8sGPT{}).
 		WithEventFilter(predicates).
+		WithOptions(options).
 		Complete(r)
 
 	metrics.Registry.MustRegister(k8sgptReconcileErrorCount, k8sgptNumberOfResults, k8sgptNumberOfResultsByType)
